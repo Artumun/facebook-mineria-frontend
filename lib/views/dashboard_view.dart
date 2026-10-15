@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 class DashboardView extends StatefulWidget {
   const DashboardView({super.key});
@@ -9,53 +13,78 @@ class DashboardView extends StatefulWidget {
 }
 
 class _DashboardViewState extends State<DashboardView> {
-  final TextEditingController _urlController = TextEditingController(
-    text: 'https://x.com/tech_news/status/17894561230',
-  );
+  final TextEditingController _urlController = TextEditingController();
 
   bool _isLoading = false;
-  bool _hasAnalyzed = true; // Mostramos los mock datos inicialmente
+  bool _hasAnalyzed = false;
   int _touchedIndex = -1;
 
-  // Datos mock de comentarios
-  final List<Map<String, String>> _mockComments = [
-    {
-      'username': '@maria_dev',
-      'comment':
-          '¡Excelente iniciativa! Me parece una propuesta tecnológica increíble para el sector.',
-      'sentiment': 'Positivo',
-    },
-    {
-      'username': '@carlos_tech',
-      'comment':
-          'El sistema presenta ligeras demoras en las horas pico de procesamiento.',
-      'sentiment': 'Negativo',
-    },
-    {
-      'username': '@analista_x',
-      'comment':
-          'Se realizó la prueba correspondiente respetando la documentación establecida.',
-      'sentiment': 'Neutro',
-    },
-    {
-      'username': '@sofia_m',
-      'comment':
-          'Me encanta la nueva interfaz gráfica y el resumen automático generado con IA.',
-      'sentiment': 'Positivo',
-    },
-    {
-      'username': '@juan_perez',
-      'comment':
-          'Ocurrió un error inesperado al intentar exportar la tabla de resultados.',
-      'sentiment': 'Negativo',
-    },
-  ];
+  // Variables para la barra de progreso y temporizador
+  Timer? _loadingTimer;
+  int _elapsedSeconds = 0;
+  final int _estimatedTotalSeconds = 10;
+  double _progressValue = 0.0;
+  String _loadingStageText = 'Iniciando conexión con el servidor...';
 
-  void _triggerAnalysis() async {
-    if (_urlController.text.trim().isEmpty) {
+  // Estado de datos reales provenientes del backend
+  int? _idAnalisis;
+  int _likes = 0;
+  int _compartidos = 0;
+  int _totalComentarios = 0;
+  double _porcPositivo = 0;
+  double _porcNegativo = 0;
+  double _porcNeutro = 0;
+  String _resumenIA = '';
+  List<Map<String, dynamic>> _comments = [];
+
+  void _startLoadingTimer() {
+    _loadingTimer?.cancel();
+    _elapsedSeconds = 0;
+    _progressValue = 0.05;
+    _loadingStageText = 'Abriendo enlace público de Facebook...';
+
+    _loadingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        _elapsedSeconds++;
+        if (_elapsedSeconds <= 3) {
+          _loadingStageText = 'Resolviendo enlace y cargando publicación...';
+          _progressValue = (_elapsedSeconds / _estimatedTotalSeconds).clamp(0.1, 0.35);
+        } else if (_elapsedSeconds <= 6) {
+          _loadingStageText = 'Desplegando hilo y extrayendo comentarios públicos...';
+          _progressValue = (_elapsedSeconds / _estimatedTotalSeconds).clamp(0.4, 0.65);
+        } else if (_elapsedSeconds <= 9) {
+          _loadingStageText = 'Clasificando sentimientos con red neuronal RoBERTa...';
+          _progressValue = (_elapsedSeconds / _estimatedTotalSeconds).clamp(0.7, 0.9);
+        } else {
+          _loadingStageText = 'Almacenando resultados en MariaDB y generando métricas...';
+          _progressValue = 0.95;
+        }
+      });
+    });
+  }
+
+  void _stopLoadingTimer() {
+    _loadingTimer?.cancel();
+    _loadingTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _stopLoadingTimer();
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _triggerAnalysis() async {
+    final urlText = _urlController.text.trim();
+    if (urlText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Por favor ingrese una URL válida de X (Twitter)'),
+          content: Text('Por favor ingrese una URL válida de Facebook'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -65,31 +94,86 @@ class _DashboardViewState extends State<DashboardView> {
     setState(() {
       _isLoading = true;
     });
+    _startLoadingTimer();
 
-    // Simulación de carga (2.5 segundos de procesamiento simulado)
-    await Future.delayed(const Duration(milliseconds: 2500));
+    try {
+      final response = await http.post(
+        Uri.parse('http://127.0.0.1:5000/api/analizar'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'url': urlText}),
+      );
 
-    if (!mounted) return;
+      final data = jsonDecode(response.body);
 
-    setState(() {
-      _isLoading = false;
-      _hasAnalyzed = true;
-    });
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('¡Análisis completado exitosamente con IA!'),
-        backgroundColor: Color(0xFF10B981),
-      ),
-    );
+      if (response.statusCode == 200) {
+        setState(() {
+          _progressValue = 1.0;
+          _idAnalisis = data['id_analisis'];
+          _likes = data['likes'] ?? 0;
+          _compartidos = data['compartidos'] ?? 0;
+          _totalComentarios = data['total_comentarios'] ?? 0;
+          _porcPositivo = (data['porcentajes']['positivo'] ?? 0).toDouble();
+          _porcNegativo = (data['porcentajes']['negativo'] ?? 0).toDouble();
+          _porcNeutro = (data['porcentajes']['neutro'] ?? 0).toDouble();
+          _resumenIA = data['resumen_ia'] ?? '';
+          _comments = List<Map<String, dynamic>>.from(data['comentarios'] ?? []);
+          _hasAnalyzed = true;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Análisis completado en $_elapsedSeconds segundos'),
+            backgroundColor: const Color(0xFF10B981),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['error'] ?? 'Error al analizar la publicación'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error de conexión con el servidor backend'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      _stopLoadingTimer();
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _descargarExcel() async {
+    if (_idAnalisis == null) return;
+    final Uri url = Uri.parse('http://127.0.0.1:5000/api/exportar/$_idAnalisis');
+    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo iniciar la descarga del archivo Excel'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC), // Slate 50
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0F172A), // Slate 900
+        backgroundColor: const Color(0xFF0F172A),
         foregroundColor: Colors.white,
         elevation: 4,
         title: Row(
@@ -110,7 +194,7 @@ class _DashboardViewState extends State<DashboardView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Sistema de Minería & Análisis de IA',
+                  'Sistema de Minería & Análisis de IA - Facebook',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 Text(
@@ -122,6 +206,19 @@ class _DashboardViewState extends State<DashboardView> {
           ],
         ),
         actions: [
+          if (_hasAnalyzed && _idAnalisis != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
+              child: ElevatedButton.icon(
+                onPressed: _descargarExcel,
+                icon: const Icon(Icons.download_rounded, size: 18),
+                label: const Text('Descargar Excel (.xlsx)'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
           IconButton(
             tooltip: 'Cerrar Sesión',
             icon: const Icon(Icons.logout_rounded),
@@ -140,21 +237,13 @@ class _DashboardViewState extends State<DashboardView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // 1. Barra de entrada de URL y botón "Analizar"
                 _buildAnalysisInputCard(),
-
                 const SizedBox(height: 24),
-
-                // Spinner de carga o contenido principal
                 if (_isLoading)
-                  _buildLoadingSimulation()
+                  _buildLoadingIndicator()
                 else if (_hasAnalyzed) ...[
-                  // 2. Tarjetas de Métricas
                   _buildMetricsCards(),
-
                   const SizedBox(height: 24),
-
-                  // 3. Gráfica de Sentimientos y Resumen de Métricas
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final isMobile = constraints.maxWidth < 800;
@@ -183,10 +272,7 @@ class _DashboardViewState extends State<DashboardView> {
                       );
                     },
                   ),
-
                   const SizedBox(height: 24),
-
-                  // 4. Tabla de Comentarios
                   _buildCommentsTableCard(),
                 ],
               ],
@@ -197,7 +283,6 @@ class _DashboardViewState extends State<DashboardView> {
     );
   }
 
-  // --- WIDGET: Campo URL y Botón Analizar ---
   Widget _buildAnalysisInputCard() {
     return Card(
       elevation: 2,
@@ -212,7 +297,7 @@ class _DashboardViewState extends State<DashboardView> {
                 Icon(Icons.link_rounded, color: Color(0xFF1E3A8A)),
                 SizedBox(width: 8),
                 Text(
-                  'Recolector de Publicaciones de X (Multiredes)',
+                  'Recolector de Publicaciones de Facebook',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -255,8 +340,8 @@ class _DashboardViewState extends State<DashboardView> {
     return TextField(
       controller: _urlController,
       decoration: InputDecoration(
-        hintText: 'https://x.com/usuario/status/123456789',
-        labelText: 'URL del post a analizar',
+        hintText: 'https://www.facebook.com/share/p/...',
+        labelText: 'URL de la publicación de Facebook a analizar',
         prefixIcon: const Icon(Icons.travel_explore_rounded),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -273,7 +358,7 @@ class _DashboardViewState extends State<DashboardView> {
     return ElevatedButton.icon(
       onPressed: _isLoading ? null : _triggerAnalysis,
       icon: const Icon(Icons.search_rounded),
-      label: const Text('Analizar Post'),
+      label: const Text('Analizar Publicación'),
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF1E3A8A),
         foregroundColor: Colors.white,
@@ -286,10 +371,12 @@ class _DashboardViewState extends State<DashboardView> {
     );
   }
 
-  // --- WIDGET: Simulación de Carga ---
-  Widget _buildLoadingSimulation() {
+  Widget _buildLoadingIndicator() {
+    final int remainingSeconds = (_estimatedTotalSeconds - _elapsedSeconds).clamp(1, 30);
+    final int percentText = (_progressValue * 100).toInt();
+
     return Container(
-      padding: const EdgeInsets.all(48.0),
+      padding: const EdgeInsets.all(36.0),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -304,62 +391,110 @@ class _DashboardViewState extends State<DashboardView> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const SizedBox(
-            width: 60,
-            height: 60,
-            child: CircularProgressIndicator(
-              strokeWidth: 4,
-              valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1E3A8A)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1E3A8A)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    _loadingStageText,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                '$percentText%',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A8A),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: _progressValue,
+              minHeight: 12,
+              backgroundColor: const Color(0xFFE2E8F0),
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF1E3A8A)),
             ),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'Ejecutando proceso de extracción y modelos de NLP...',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF0F172A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Simulando respuesta del backend (Python / Flask + Workers)...',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.timer_outlined, size: 16, color: Colors.grey[600]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Tiempo transcurrido: ${_elapsedSeconds}s',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+              Text(
+                _elapsedSeconds < _estimatedTotalSeconds
+                    ? 'Tiempo estimado restante: ~${remainingSeconds}s'
+                    : 'Finalizando procesamiento...',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blueGrey[700],
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  // --- WIDGET: 3 Tarjetas de Métricas ---
   Widget _buildMetricsCards() {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isMobile = constraints.maxWidth < 700;
         final cards = [
           _buildMetricCard(
-            title: 'Likes Totales',
-            value: '1,420',
-            icon: Icons.favorite_rounded,
+            title: 'Reacciones / Likes',
+            value: '$_likes',
+            icon: Icons.thumb_up_alt_rounded,
             color: const Color(0xFFE11D48),
-            badgeText: '+14% interacción',
+            badgeText: 'Interacción directa',
           ),
           _buildMetricCard(
-            title: 'Reposts / Compartidos',
-            value: '310',
-            icon: Icons.repeat_rounded,
+            title: 'Compartidos',
+            value: '$_compartidos',
+            icon: Icons.share_rounded,
             color: const Color(0xFF059669),
-            badgeText: '+8% difusión',
+            badgeText: 'Alcance de difusión',
           ),
           _buildMetricCard(
-            title: 'Respuestas Totales',
-            value: '85',
+            title: 'Muestra Analizada',
+            value: '$_totalComentarios',
             icon: Icons.chat_bubble_rounded,
             color: const Color(0xFF2563EB),
-            badgeText: '5 comentarios clave',
+            badgeText: 'Comentarios evaluados con IA',
           ),
         ];
 
@@ -460,7 +595,6 @@ class _DashboardViewState extends State<DashboardView> {
     );
   }
 
-  // --- WIDGET: Gráfica de Sentimientos fl_chart ---
   Widget _buildSentimentChartCard() {
     return Card(
       elevation: 2,
@@ -470,37 +604,16 @@ class _DashboardViewState extends State<DashboardView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            const Row(
               children: [
-                const Row(
-                  children: [
-                    Icon(Icons.pie_chart_rounded, color: Color(0xFF1E3A8A)),
-                    SizedBox(width: 8),
-                    Text(
-                      'Distribución de Sentimientos (NLP)',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text(
-                    'fl_chart',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF1E3A8A),
-                      fontWeight: FontWeight.bold,
-                    ),
+                Icon(Icons.pie_chart_rounded, color: Color(0xFF1E3A8A)),
+                SizedBox(width: 8),
+                Text(
+                  'Distribución de Sentimientos (NLP)',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF0F172A),
                   ),
                 ),
               ],
@@ -514,8 +627,7 @@ class _DashboardViewState extends State<DashboardView> {
                     child: PieChart(
                       PieChartData(
                         pieTouchData: PieTouchData(
-                          touchCallback:
-                              (FlTouchEvent event, pieTouchResponse) {
+                          touchCallback: (FlTouchEvent event, pieTouchResponse) {
                             setState(() {
                               if (!event.isInterestedForInteractions ||
                                   pieTouchResponse == null ||
@@ -542,19 +654,19 @@ class _DashboardViewState extends State<DashboardView> {
                     children: [
                       _buildLegendIndicator(
                         color: const Color(0xFF10B981),
-                        text: 'Positivo (50%)',
+                        text: 'Positivo (${_porcPositivo.toInt()}%)',
                         isSquare: false,
                       ),
                       const SizedBox(height: 12),
                       _buildLegendIndicator(
                         color: const Color(0xFFEF4444),
-                        text: 'Negativo (20%)',
+                        text: 'Negativo (${_porcNegativo.toInt()}%)',
                         isSquare: false,
                       ),
                       const SizedBox(height: 12),
                       _buildLegendIndicator(
                         color: const Color(0xFF64748B),
-                        text: 'Neutro (30%)',
+                        text: 'Neutro (${_porcNeutro.toInt()}%)',
                         isSquare: false,
                       ),
                     ],
@@ -569,6 +681,11 @@ class _DashboardViewState extends State<DashboardView> {
   }
 
   List<PieChartSectionData> _generatePieChartSections() {
+    final sinDatos = _porcPositivo == 0 && _porcNegativo == 0 && _porcNeutro == 0;
+    final valPos = sinDatos ? 0.0 : _porcPositivo;
+    final valNeg = sinDatos ? 0.0 : _porcNegativo;
+    final valNeu = sinDatos ? 100.0 : _porcNeutro;
+
     return List.generate(3, (i) {
       final isTouched = i == _touchedIndex;
       final fontSize = isTouched ? 18.0 : 14.0;
@@ -577,9 +694,9 @@ class _DashboardViewState extends State<DashboardView> {
       switch (i) {
         case 0:
           return PieChartSectionData(
-            color: const Color(0xFF10B981), // Positivo
-            value: 50,
-            title: '50%',
+            color: const Color(0xFF10B981),
+            value: valPos,
+            title: '${_porcPositivo.toInt()}%',
             radius: radius,
             titleStyle: TextStyle(
               fontSize: fontSize,
@@ -589,9 +706,9 @@ class _DashboardViewState extends State<DashboardView> {
           );
         case 1:
           return PieChartSectionData(
-            color: const Color(0xFFEF4444), // Negativo
-            value: 20,
-            title: '20%',
+            color: const Color(0xFFEF4444),
+            value: valNeg,
+            title: '${_porcNegativo.toInt()}%',
             radius: radius,
             titleStyle: TextStyle(
               fontSize: fontSize,
@@ -601,9 +718,9 @@ class _DashboardViewState extends State<DashboardView> {
           );
         case 2:
           return PieChartSectionData(
-            color: const Color(0xFF64748B), // Neutro
-            value: 30,
-            title: '30%',
+            color: const Color(0xFF64748B),
+            value: valNeu,
+            title: '${_porcNeutro.toInt()}%',
             radius: radius,
             titleStyle: TextStyle(
               fontSize: fontSize,
@@ -645,7 +762,6 @@ class _DashboardViewState extends State<DashboardView> {
     );
   }
 
-  // --- WIDGET: Resumen Ejecutivo ---
   Widget _buildExecutiveSummaryCard() {
     return Card(
       elevation: 2,
@@ -671,9 +787,7 @@ class _DashboardViewState extends State<DashboardView> {
             ),
             const SizedBox(height: 16),
             Text(
-              'La publicación presenta una postura predominantemente positiva (50%). '
-              'Los usuarios destacan la innovación tecnológica y el diseño visual. '
-              'Se detectó un 20% de opiniones negativas relacionadas con latencias en el procesamiento.',
+              _resumenIA,
               style: TextStyle(
                 fontSize: 13,
                 height: 1.5,
@@ -685,8 +799,11 @@ class _DashboardViewState extends State<DashboardView> {
             const SizedBox(height: 8),
             Row(
               children: [
-                Icon(Icons.psychology_rounded,
-                    size: 18, color: Colors.purple[700]),
+                Icon(
+                  Icons.psychology_rounded,
+                  size: 18,
+                  color: Colors.purple[700],
+                ),
                 const SizedBox(width: 8),
                 Text(
                   'Modelo: RoBERTa-Sentiment-ES',
@@ -704,7 +821,6 @@ class _DashboardViewState extends State<DashboardView> {
     );
   }
 
-  // --- WIDGET: Tabla de Comentarios ---
   Widget _buildCommentsTableCard() {
     return Card(
       elevation: 2,
@@ -732,137 +848,155 @@ class _DashboardViewState extends State<DashboardView> {
                   ],
                 ),
                 Text(
-                  '5 comentarios mostrados',
+                  '${_comments.length} comentarios mostrados',
                   style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(8),
+            if (_comments.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24.0),
+                child: Center(
+                  child: Text(
+                    'No se encontraron comentarios públicos visibles en esta publicación.',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
                 ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    headingRowColor: WidgetStateProperty.all(
-                      const Color(0xFFF1F5F9), // Slate 100
-                    ),
-                    columns: const [
-                      DataColumn(
-                        label: Text(
-                          'Usuario',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
+              )
+            else
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey[300]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingRowColor: WidgetStateProperty.all(
+                        const Color(0xFFF1F5F9),
+                      ),
+                      columns: const [
+                        DataColumn(
+                          label: Text(
+                            'Usuario',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F172A),
+                            ),
                           ),
                         ),
-                      ),
-                      DataColumn(
-                        label: Text(
-                          'Texto del Comentario',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
+                        DataColumn(
+                          label: Text(
+                            'Texto del Comentario',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F172A),
+                            ),
                           ),
                         ),
-                      ),
-                      DataColumn(
-                        label: Text(
-                          'Sentimiento',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
+                        DataColumn(
+                          label: Text(
+                            'Sentimiento',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F172A),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                    rows: _mockComments.map((item) {
-                      final sentiment = item['sentiment']!;
-                      Color badgeBgColor;
-                      Color badgeTextColor;
+                      ],
+                      rows: _comments.map((item) {
+                        final username = (item['username'] ?? 'Usuario').toString();
+                        final commentText = (item['comment'] ?? '').toString();
+                        final sentiment = (item['sentiment'] ?? 'Neutro').toString();
 
-                      if (sentiment == 'Positivo') {
-                        badgeBgColor = const Color(0xFFD1FAE5); // Emerald 100
-                        badgeTextColor = const Color(0xFF065F46); // Emerald 800
-                      } else if (sentiment == 'Negativo') {
-                        badgeBgColor = const Color(0xFFFEE2E2); // Red 100
-                        badgeTextColor = const Color(0xFF991B1B); // Red 800
-                      } else {
-                        badgeBgColor = const Color(0xFFE2E8F0); // Slate 200
-                        badgeTextColor = const Color(0xFF1E293B); // Slate 800
-                      }
+                        Color badgeBgColor;
+                        Color badgeTextColor;
 
-                      return DataRow(
-                        cells: [
-                          DataCell(
-                            Row(
-                              children: [
-                                CircleAvatar(
-                                  radius: 12,
-                                  backgroundColor: const Color(0xFF1E3A8A)
-                                      .withValues(alpha: 0.1),
-                                  child: Text(
-                                    item['username']![1].toUpperCase(),
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1E3A8A),
+                        if (sentiment == 'Positivo') {
+                          badgeBgColor = const Color(0xFFD1FAE5);
+                          badgeTextColor = const Color(0xFF065F46);
+                        } else if (sentiment == 'Negativo') {
+                          badgeBgColor = const Color(0xFFFEE2E2);
+                          badgeTextColor = const Color(0xFF991B1B);
+                        } else {
+                          badgeBgColor = const Color(0xFFE2E8F0);
+                          badgeTextColor = const Color(0xFF1E293B);
+                        }
+
+                        final inicial = username.isNotEmpty
+                            ? username[0].toUpperCase()
+                            : 'U';
+
+                        return DataRow(
+                          cells: [
+                            DataCell(
+                              Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 12,
+                                    backgroundColor: const Color(0xFF1E3A8A)
+                                        .withValues(alpha: 0.1),
+                                    child: Text(
+                                      inicial,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF1E3A8A),
+                                      ),
                                     ),
                                   ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    username,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            DataCell(
+                              SizedBox(
+                                width: 450,
+                                child: Text(
+                                  commentText,
+                                  style: const TextStyle(fontSize: 13),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 2,
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  item['username']!,
-                                  style: const TextStyle(
+                              ),
+                            ),
+                            DataCell(
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: badgeBgColor,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  sentiment,
+                                  style: TextStyle(
+                                    fontSize: 12,
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 13,
+                                    color: badgeTextColor,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                          DataCell(
-                            SizedBox(
-                              width: 450,
-                              child: Text(
-                                item['comment']!,
-                                style: const TextStyle(fontSize: 13),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 2,
                               ),
                             ),
-                          ),
-                          DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: badgeBgColor,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                sentiment,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: badgeTextColor,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    }).toList(),
+                          ],
+                        );
+                      }).toList(),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),

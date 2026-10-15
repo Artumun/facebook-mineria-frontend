@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 class LoginView extends StatefulWidget {
   const LoginView({super.key});
@@ -9,35 +11,49 @@ class LoginView extends StatefulWidget {
 
 class _LoginViewState extends State<LoginView> {
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _usernameController =
-      TextEditingController(text: 'admin@empresa.com');
-  final TextEditingController _passwordController =
-      TextEditingController(text: '123456');
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
 
   bool _obscurePassword = true;
   bool _isLoading = false;
   String? _errorMessage;
 
-  void _handleLogin() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
+  Future<void> _handleLogin() async {
+    if (!_formKey.currentState!.validate()) return;
 
-      // Simular pequeña latencia de autenticación
-      await Future.delayed(const Duration(milliseconds: 800));
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
-      // Credenciales de prueba
-      if (_usernameController.text.trim() == 'admin@empresa.com' &&
-          _passwordController.text == '123456') {
+    try {
+      final response = await http.post(
+        Uri.parse('http://127.0.0.1:5000/api/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'correo': _usernameController.text.trim(),
+          'password': _passwordController.text,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, '/dashboard');
       } else {
         setState(() {
+          _errorMessage = data['error'] ?? 'Error al iniciar sesión';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'No se pudo conectar con el servidor backend.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
           _isLoading = false;
-          _errorMessage =
-              'Credenciales incorrectas. Pruebe admin@empresa.com / 123456';
         });
       }
     }
@@ -48,7 +64,7 @@ class _LoginViewState extends State<LoginView> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A), // Slate 900
+      backgroundColor: const Color(0xFF0F172A),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
@@ -72,7 +88,6 @@ class _LoginViewState extends State<LoginView> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Logo / Header Icon
                   Container(
                     width: 64,
                     height: 64,
@@ -87,8 +102,6 @@ class _LoginViewState extends State<LoginView> {
                     ),
                   ),
                   const SizedBox(height: 20),
-
-                  // Title & Subtitle
                   Text(
                     'Sistema de Minería de Datos',
                     textAlign: TextAlign.center,
@@ -99,15 +112,13 @@ class _LoginViewState extends State<LoginView> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Ingrese sus credenciales de acceso para el módulo de análisis de IA',
+                    'Ingrese sus credenciales para el análisis de Facebook con IA',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: Colors.grey[600],
                     ),
                   ),
                   const SizedBox(height: 32),
-
-                  // Error Message Banner
                   if (_errorMessage != null) ...[
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -134,13 +145,11 @@ class _LoginViewState extends State<LoginView> {
                     ),
                     const SizedBox(height: 16),
                   ],
-
-                  // Campo de Usuario
                   TextFormField(
                     controller: _usernameController,
                     keyboardType: TextInputType.emailAddress,
                     decoration: InputDecoration(
-                      labelText: 'Usuario / Correo Electrónico',
+                      labelText: 'Correo Electrónico',
                       hintText: 'admin@empresa.com',
                       prefixIcon: const Icon(Icons.person_outline),
                       border: OutlineInputBorder(
@@ -149,14 +158,12 @@ class _LoginViewState extends State<LoginView> {
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
-                        return 'Por favor ingrese su usuario';
+                        return 'Por favor ingrese su correo';
                       }
                       return null;
                     },
                   ),
                   const SizedBox(height: 20),
-
-                  // Campo de Contraseña
                   TextFormField(
                     controller: _passwordController,
                     obscureText: _obscurePassword,
@@ -187,23 +194,7 @@ class _LoginViewState extends State<LoginView> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 12),
-
-                  // Helper hint for test user
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      'Usuario de prueba: admin@empresa.com / 123456',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                  ),
                   const SizedBox(height: 28),
-
-                  // Botón de Entrar
                   SizedBox(
                     height: 48,
                     child: ElevatedButton(
