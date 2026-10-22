@@ -12,22 +12,17 @@ class MineriaIAApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sistema de Minería & IA - Estadía',
+      title: 'Sistema de análisis de interacciones • Facebook',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E3A8A), // Navy Primary
+          seedColor: const Color(0xFF0F172A),
           brightness: Brightness.light,
-          primary: const Color(0xFF1E3A8A),
+          primary: const Color(0xFF0F172A),
           surface: Colors.white,
         ),
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0F172A),
-          foregroundColor: Colors.white,
-          elevation: 2,
-        ),
+        scaffoldBackgroundColor: const Color(0xFFF4F6F9),
         fontFamily: 'Roboto',
       ),
       initialRoute: '/',
