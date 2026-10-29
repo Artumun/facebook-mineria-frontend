@@ -29,6 +29,7 @@ class _DashboardViewState extends State<DashboardView> {
 
   Timer? _loadingTimer;
   int _elapsedSeconds = 0;
+  int _remainingSeconds = 25;
   double _progressValue = 0.0;
   String _loadingStageText = 'Preparando consulta...';
 
@@ -38,6 +39,7 @@ class _DashboardViewState extends State<DashboardView> {
   int _likes = 0;
   int _compartidos = 0;
   int _totalComentarios = 0;
+  int _totalBots = 0;
   double _porcPositivo = 0;
   double _porcNegativo = 0;
   double _porcNeutro = 0;
@@ -58,16 +60,14 @@ class _DashboardViewState extends State<DashboardView> {
   List<Map<String, dynamic>> _historialList = [];
   bool _loadingHistorial = false;
 
-int _remainingSeconds = 0;
-
   void _startLoadingTimer() {
     _loadingTimer?.cancel();
     _elapsedSeconds = 0;
-    _remainingSeconds = 12;
-    _progressValue = 0.04;
-    _loadingStageText = 'Iniciando comunicación con el servidor...';
+    _remainingSeconds = 25;
+    _progressValue = 0.06;
+    _loadingStageText = 'Conectando con pestaña activa de Facebook...';
 
-    _loadingTimer = Timer.periodic(const Duration(milliseconds: 600), (timer) async {
+    _loadingTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
       if (!mounted || !_isLoading) {
         timer.cancel();
         return;
@@ -77,11 +77,11 @@ int _remainingSeconds = 0;
         if (resp.statusCode == 200 && mounted && _isLoading) {
           final data = jsonDecode(resp.body);
           setState(() {
-            final int porc = data['porcentaje'] ?? 5;
+            final int porc = data['porcentaje'] ?? 6;
             _progressValue = (porc / 100.0).clamp(0.02, 1.0);
             _loadingStageText = data['etapa'] ?? 'Procesando publicación...';
             _elapsedSeconds = data['tiempo_transcurrido'] ?? _elapsedSeconds;
-            _remainingSeconds = data['tiempo_restante'] ?? 1;
+            _remainingSeconds = data['tiempo_restante'] ?? 4;
           });
         }
       } catch (_) {}
@@ -111,6 +111,7 @@ int _remainingSeconds = 0;
       _likes = data['likes'] ?? 0;
       _compartidos = data['compartidos'] ?? 0;
       _totalComentarios = data['total_comentarios'] ?? 0;
+      _totalBots = data['total_bots'] ?? 0;
       _porcPositivo = (data['porcentajes']['positivo'] ?? 0).toDouble();
       _porcNegativo = (data['porcentajes']['negativo'] ?? 0).toDouble();
       _porcNeutro = (data['porcentajes']['neutro'] ?? 0).toDouble();
@@ -273,6 +274,37 @@ int _remainingSeconds = 0;
     );
   }
 
+  Widget _buildUserAvatar(String username, String avatarUrl) {
+    final inicial = username.isNotEmpty ? username[0].toUpperCase() : 'U';
+    if (avatarUrl.isNotEmpty && avatarUrl.startsWith('http')) {
+      final proxyUrl = 'http://127.0.0.1:5000/api/avatar?url=${Uri.encodeComponent(avatarUrl)}';
+      return ClipOval(
+        child: Image.network(
+          proxyUrl,
+          width: 30,
+          height: 30,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => CircleAvatar(
+            radius: 15,
+            backgroundColor: const Color(0xFFE7F3FF),
+            child: Text(
+              inicial,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _fbBlue),
+            ),
+          ),
+        ),
+      );
+    }
+    return CircleAvatar(
+      radius: 15,
+      backgroundColor: const Color(0xFFE7F3FF),
+      child: Text(
+        inicial,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _fbBlue),
+      ),
+    );
+  }
+
   List<Map<String, dynamic>> get _reaccionesFiltradas {
     return _reaccionesLista.where((item) {
       final sent = (item['sentiment'] ?? 'Neutro').toString();
@@ -286,19 +318,21 @@ int _remainingSeconds = 0;
   List<Map<String, dynamic>> get _comentariosFiltrados {
     return _comments.where((item) {
       final sent = (item['sentiment'] ?? 'Neutro').toString();
+      final esBot = item['es_bot'] == true;
       final user = (item['username'] ?? '').toString().toLowerCase();
       final text = (item['comment'] ?? '').toString().toLowerCase();
 
-      final pasaSentimiento = _filtroSentimiento == 'Todos' ||
+      final pasaFiltro = _filtroSentimiento == 'Todos' ||
           (_filtroSentimiento == 'Positivos' && sent == 'Positivo') ||
           (_filtroSentimiento == 'Negativos' && sent == 'Negativo') ||
-          (_filtroSentimiento == 'Neutros' && sent == 'Neutro');
+          (_filtroSentimiento == 'Neutros' && sent == 'Neutro') ||
+          (_filtroSentimiento == 'Posibles bots' && esBot);
 
       final pasaBusqueda = _busquedaTexto.isEmpty ||
           user.contains(_busquedaTexto.toLowerCase()) ||
           text.contains(_busquedaTexto.toLowerCase());
 
-      return pasaSentimiento && pasaBusqueda;
+      return pasaFiltro && pasaBusqueda;
     }).toList();
   }
 
@@ -408,7 +442,7 @@ int _remainingSeconds = 0;
         padding: const EdgeInsets.all(24.0),
         child: Center(
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 1150),
+            constraints: const BoxConstraints(maxWidth: 1180),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -583,7 +617,7 @@ int _remainingSeconds = 0;
               ),
               const SizedBox(width: 10),
               const Text(
-                'Extracción y análisis contextual de publicaciones',
+                'Extracción completa de comentarios, reacciones por usuario y contexto IA',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -645,7 +679,7 @@ int _remainingSeconds = 0;
     );
   }
 
-Widget _buildLoadingIndicator() {
+  Widget _buildLoadingIndicator() {
     final int percentText = (_progressValue * 100).toInt();
 
     return Container(
@@ -706,13 +740,11 @@ Widget _buildLoadingIndicator() {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Tiempo transcurrido real: ${_elapsedSeconds}s',
+                'Tiempo transcurrido: ${_elapsedSeconds}s',
                 style: const TextStyle(fontSize: 13, color: _textSecondary),
               ),
               Text(
-                _remainingSeconds > 0
-                    ? 'Tiempo restante calculado: ~${_remainingSeconds}s'
-                    : 'Finalizando...',
+                'Tiempo máximo estimado: ~${_remainingSeconds}s',
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -727,6 +759,10 @@ Widget _buildLoadingIndicator() {
   }
 
   Widget _buildMetricsCards() {
+    final int porcBots = _totalComentarios > 0
+        ? ((_totalBots / _totalComentarios) * 100).round()
+        : 0;
+
     return Row(
       children: [
         Expanded(
@@ -738,7 +774,7 @@ Widget _buildLoadingIndicator() {
             badgeText: '$_reacPositivo% de aprobación',
           ),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 14),
         Expanded(
           child: _buildMetricCard(
             title: 'Veces compartido',
@@ -748,16 +784,28 @@ Widget _buildLoadingIndicator() {
             badgeText: 'Difusión de la publicación',
           ),
         ),
-        const SizedBox(width: 16),
+        const SizedBox(width: 14),
         Expanded(
           child: _buildMetricCard(
-            title: 'Comentarios analizados',
+            title: 'Comentarios extraídos',
             value: '$_totalComentarios',
             icon: Icons.forum_rounded,
             color: const Color(0xFF6366F1),
-            badgeText: 'Evaluados con contexto e IA',
+            badgeText: 'Texto, respuestas e imágenes/GIFs',
           ),
         ),
+        if (_totalBots > 0) ...[
+          const SizedBox(width: 14),
+          Expanded(
+            child: _buildMetricCard(
+              title: 'Posibles bots detectados',
+              value: '$_totalBots',
+              icon: Icons.smart_toy_outlined,
+              color: const Color(0xFFF59E0B),
+              badgeText: '$porcBots% de spam detectado',
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -771,31 +819,31 @@ Widget _buildLoadingIndicator() {
   }) {
     return Container(
       decoration: _analyticalCardDecoration(),
-      padding: const EdgeInsets.all(20.0),
+      padding: const EdgeInsets.all(18.0),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 28, color: color),
+            child: Icon(icon, size: 26, color: color),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontSize: 13, color: _textSecondary),
+                  style: const TextStyle(fontSize: 12.5, color: _textSecondary),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   value,
                   style: const TextStyle(
-                    fontSize: 25,
+                    fontSize: 23,
                     fontWeight: FontWeight.bold,
                     color: _textPrimary,
                   ),
@@ -804,7 +852,7 @@ Widget _buildLoadingIndicator() {
                 Text(
                   badgeText,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     color: color,
                     fontWeight: FontWeight.w600,
                   ),
@@ -826,7 +874,7 @@ Widget _buildLoadingIndicator() {
         children: [
           const Row(
             children: [
-              Icon(Icons. psychology_outlined, color: _fbBlue),
+              Icon(Icons.psychology_outlined, color: _fbBlue),
               SizedBox(width: 8),
               Text(
                 'Contexto general utilizado por la IA y términos frecuentes',
@@ -847,7 +895,7 @@ Widget _buildLoadingIndicator() {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              '$_contextoPost (${_contextoMultimedia})',
+              '$_contextoPost ($_contextoMultimedia)',
               style: const TextStyle(
                 fontSize: 13.5,
                 color: _textPrimary,
@@ -1166,7 +1214,7 @@ Widget _buildLoadingIndicator() {
     );
   }
 
-  Widget _buildReactionsTableCard() {
+Widget _buildReactionsTableCard() {
     final listaReacFiltrada = _reaccionesFiltradas;
 
     return Container(
@@ -1180,10 +1228,10 @@ Widget _buildLoadingIndicator() {
             children: [
               const Row(
                 children: [
-                  Icon(Icons.thumb_up_alt_outlined, color: _fbBlue),
+                  Icon(Icons.people_alt_outlined, color: _fbBlue),
                   SizedBox(width: 8),
                   Text(
-                    'Listado y desglose de reacciones por sentimiento',
+                    'Listado de reacciones por usuario y sentimiento contextual',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -1193,7 +1241,7 @@ Widget _buildLoadingIndicator() {
                 ],
               ),
               Text(
-                'Mostrando ${listaReacFiltrada.length} tipos de reacción con actividad',
+                'Mostrando ${listaReacFiltrada.length} reacciones registradas',
                 style: const TextStyle(fontSize: 12.5, color: _textSecondary),
               ),
             ],
@@ -1227,7 +1275,7 @@ Widget _buildLoadingIndicator() {
               padding: EdgeInsets.symmetric(vertical: 20.0),
               child: Center(
                 child: Text(
-                  'No se registraron reacciones con el filtro seleccionado.',
+                  'No hay reacciones registradas para el filtro seleccionado.',
                   style: TextStyle(color: _textSecondary),
                 ),
               ),
@@ -1247,13 +1295,13 @@ Widget _buildLoadingIndicator() {
                     columns: const [
                       DataColumn(
                         label: Text(
-                          'Tipo de reacción',
+                          'Usuario que reaccionó',
                           style: TextStyle(fontWeight: FontWeight.bold, color: _textPrimary),
                         ),
                       ),
                       DataColumn(
                         label: Text(
-                          'Cantidad y proporción',
+                          'Reacción',
                           style: TextStyle(fontWeight: FontWeight.bold, color: _textPrimary),
                         ),
                       ),
@@ -1265,15 +1313,15 @@ Widget _buildLoadingIndicator() {
                       ),
                       DataColumn(
                         label: Text(
-                          'Sentimiento',
+                          'Sentimiento IA',
                           style: TextStyle(fontWeight: FontWeight.bold, color: _textPrimary),
                         ),
                       ),
                     ],
                     rows: listaReacFiltrada.map((item) {
-                      final nombre = (item['reaccion'] ?? 'Me gusta').toString();
-                      final cantidad = item['cantidad'] ?? 0;
-                      final porcentaje = item['porcentaje'] ?? 0;
+                      final username = (item['username'] ?? 'Usuario').toString();
+                      final avatarUrl = (item['avatar_url'] ?? '').toString();
+                      final nombreReac = (item['reaccion'] ?? 'Me gusta').toString();
                       final explicacion = (item['explicacion'] ?? '').toString();
                       final sentiment = (item['sentiment'] ?? 'Positivo').toString();
 
@@ -1290,25 +1338,17 @@ Widget _buildLoadingIndicator() {
                         badgeText = _textPrimary;
                       }
 
-                      final colorIcono = _colorPorReaccion(nombre);
+                      final colorIcono = _colorPorReaccion(nombreReac);
 
                       return DataRow(
                         cells: [
                           DataCell(
                             Row(
                               children: [
-                                CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: colorIcono.withValues(alpha: 0.12),
-                                  child: Icon(
-                                    _iconoPorReaccion(nombre),
-                                    size: 16,
-                                    color: colorIcono,
-                                  ),
-                                ),
+                                _buildUserAvatar(username, avatarUrl),
                                 const SizedBox(width: 10),
                                 Text(
-                                  nombre,
+                                  username,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontSize: 13,
@@ -1319,18 +1359,32 @@ Widget _buildLoadingIndicator() {
                             ),
                           ),
                           DataCell(
-                            Text(
-                              '$cantidad usuarios ($porcentaje%)',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                                color: _textPrimary,
-                              ),
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 13,
+                                  backgroundColor: colorIcono.withValues(alpha: 0.12),
+                                  child: Icon(
+                                    _iconoPorReaccion(nombreReac),
+                                    size: 15,
+                                    color: colorIcono,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  nombreReac,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                    color: colorIcono,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           DataCell(
                             SizedBox(
-                              width: 400,
+                              width: 390,
                               child: Text(
                                 explicacion,
                                 style: const TextStyle(fontSize: 13, color: _textSecondary),
@@ -1370,6 +1424,13 @@ Widget _buildLoadingIndicator() {
 
   Widget _buildCommentsTableCard() {
     final listaFiltrada = _comentariosFiltrados;
+    final opcionesFiltro = [
+      'Todos',
+      'Positivos',
+      'Negativos',
+      'Neutros',
+      if (_totalBots > 0) 'Posibles bots',
+    ];
 
     return Container(
       decoration: _analyticalCardDecoration(),
@@ -1385,7 +1446,7 @@ Widget _buildLoadingIndicator() {
                   Icon(Icons.forum_outlined, color: _fbBlue),
                   SizedBox(width: 8),
                   Text(
-                    'Listado de comentarios analizados',
+                    'Listado de comentarios analizados con IA',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -1406,13 +1467,17 @@ Widget _buildLoadingIndicator() {
             runSpacing: 10,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              for (final filtro in ['Todos', 'Positivos', 'Negativos', 'Neutros'])
+              for (final filtro in opcionesFiltro)
                 ChoiceChip(
                   label: Text(filtro),
                   selected: _filtroSentimiento == filtro,
-                  selectedColor: const Color(0xFFE7F3FF),
+                  selectedColor: filtro == 'Posibles bots'
+                      ? const Color(0xFFFEF3C7)
+                      : const Color(0xFFE7F3FF),
                   labelStyle: TextStyle(
-                    color: _filtroSentimiento == filtro ? _fbBlue : _textSecondary,
+                    color: _filtroSentimiento == filtro
+                        ? (filtro == 'Posibles bots' ? const Color(0xFFB45309) : _fbBlue)
+                        : _textSecondary,
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
                   ),
@@ -1423,7 +1488,7 @@ Widget _buildLoadingIndicator() {
                   },
                 ),
               SizedBox(
-                width: 280,
+                width: 260,
                 height: 38,
                 child: TextField(
                   controller: _searchCommentController,
@@ -1433,7 +1498,7 @@ Widget _buildLoadingIndicator() {
                     });
                   },
                   decoration: InputDecoration(
-                    hintText: 'Buscar por usuario o palabra...',
+                    hintText: 'Buscar por usuario o texto...',
                     hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
                     prefixIcon: const Icon(Icons.search_rounded, size: 18, color: _textSecondary),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
@@ -1471,17 +1536,17 @@ Widget _buildLoadingIndicator() {
                   scrollDirection: Axis.horizontal,
                   child: DataTable(
                     headingRowColor: WidgetStateProperty.all(_bgAnalytical),
-                    columns: const [
-                      DataColumn(
+                    columns: [
+                      const DataColumn(
                         label: Text(
-                          'Nombre del usuario',
+                          'Usuario que comentó',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: _textPrimary,
                           ),
                         ),
                       ),
-                      DataColumn(
+                      const DataColumn(
                         label: Text(
                           'Comentario',
                           style: TextStyle(
@@ -1490,20 +1555,33 @@ Widget _buildLoadingIndicator() {
                           ),
                         ),
                       ),
-                      DataColumn(
+                      const DataColumn(
                         label: Text(
-                          'Sentimiento',
+                          'Sentimiento IA',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: _textPrimary,
                           ),
                         ),
                       ),
+                      if (_totalBots > 0)
+                        const DataColumn(
+                          label: Text(
+                            'Comentarios repetidos',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: _textPrimary,
+                            ),
+                          ),
+                        ),
                     ],
                     rows: listaFiltrada.map((item) {
                       final username = (item['username'] ?? 'Usuario').toString();
+                      final avatarUrl = (item['avatar_url'] ?? '').toString();
                       final commentText = (item['comment'] ?? '').toString();
                       final sentiment = (item['sentiment'] ?? 'Neutro').toString();
+                      final esBot = item['es_bot'] == true;
+                      final motivoBot = (item['motivo_bot'] ?? 'Orgánico').toString();
 
                       Color badgeBg;
                       Color badgeText;
@@ -1518,27 +1596,12 @@ Widget _buildLoadingIndicator() {
                         badgeText = _textPrimary;
                       }
 
-                      final inicial = username.isNotEmpty
-                          ? username[0].toUpperCase()
-                          : 'U';
-
                       return DataRow(
                         cells: [
                           DataCell(
                             Row(
                               children: [
-                                CircleAvatar(
-                                  radius: 13,
-                                  backgroundColor: const Color(0xFFE7F3FF),
-                                  child: Text(
-                                    inicial,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                      color: _fbBlue,
-                                    ),
-                                  ),
-                                ),
+                                _buildUserAvatar(username, avatarUrl),
                                 const SizedBox(width: 10),
                                 Text(
                                   username,
@@ -1553,7 +1616,7 @@ Widget _buildLoadingIndicator() {
                           ),
                           DataCell(
                             SizedBox(
-                              width: 480,
+                              width: 450,
                               child: Text(
                                 commentText,
                                 style: const TextStyle(
@@ -1585,6 +1648,33 @@ Widget _buildLoadingIndicator() {
                               ),
                             ),
                           ),
+                          if (_totalBots > 0)
+                            DataCell(
+                              esBot
+                                  ? Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEF3C7),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: const Color(0xFFF59E0B)),
+                                      ),
+                                      child: Text(
+                                        motivoBot,
+                                        style: const TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFFB45309),
+                                        ),
+                                      ),
+                                    )
+                                  : const Text(
+                                      'Orgánico',
+                                      style: TextStyle(fontSize: 12, color: _textSecondary),
+                                    ),
+                            ),
                         ],
                       );
                     }).toList(),
